@@ -240,6 +240,29 @@ internal struct A8C1 { public int V; }
         }
     }
 
+    [WithAny(typeof(JobTag), typeof(JobVel2))]
+    internal struct WithAnyJob : IJobEntity
+    {
+        private void Execute(ref JobPos p) => p.X++;
+    }
+
+    internal struct JobVel2
+    {
+        public float X;
+    }
+
+    internal struct JobVel3
+    {
+        public float X;
+    }
+
+    [WithAny(typeof(JobVel2), typeof(JobVel3))]
+    [WithNone(typeof(JobTag))]
+    internal struct WithAnyNoneJob : IJobEntity
+    {
+        private void Execute(ref JobPos p) => p.X = 5;
+    }
+
     internal static class JobEntityUseCaseTests
     {
         [Test]
@@ -342,6 +365,51 @@ internal struct A8C1 { public int V; }
             using var world = JobEntityTests.CreateWorld(1);
             new MoveJob { Dt = 2f }.ScheduleParallel(world);
             That(JobEntityTests.SumPositions(world), Is.EqualTo(2f).Within(0.001f));
+        }
+
+        [Test]
+        public static void WithAny_RunsOncePerEntity()
+        {
+            using var world = new World();
+            var plain = world.Create(new JobPos());
+            var tagOnly = world.Create(new JobPos(), new JobTag());
+            var vel2Only = world.Create(new JobPos(), new JobVel2 { X = 1 });
+            var both = world.Create(new JobPos(), new JobTag(), new JobVel2 { X = 1 });
+
+            new WithAnyJob().Run(world);
+
+            That(plain.Get<JobPos>().X, Is.EqualTo(0));
+            That(tagOnly.Get<JobPos>().X, Is.EqualTo(1));
+            That(vel2Only.Get<JobPos>().X, Is.EqualTo(1));
+            That(both.Get<JobPos>().X, Is.EqualTo(1));
+        }
+
+        [Test]
+        public static void WithAny_MatchesAtLeastOneOfMany()
+        {
+            using var world = new World();
+            var vel3 = world.Create(new JobPos(), new JobVel3 { X = 1 });
+            var vel2And3 = world.Create(new JobPos(), new JobVel2 { X = 1 }, new JobVel3 { X = 1 });
+
+            new WithAnyNoneJob().ScheduleParallel(world);
+
+            That(vel3.Get<JobPos>().X, Is.EqualTo(5));
+            That(vel2And3.Get<JobPos>().X, Is.EqualTo(5));
+        }
+
+        [Test]
+        public static void WithAny_CombinesWithWithNone()
+        {
+            using var world = new World();
+            var vel2 = world.Create(new JobPos(), new JobVel2 { X = 1 });
+            var vel2Tagged = world.Create(new JobPos(), new JobVel2 { X = 1 }, new JobTag());
+            var vel3 = world.Create(new JobPos(), new JobVel3 { X = 1 });
+
+            new WithAnyNoneJob().Run(world);
+
+            That(vel2.Get<JobPos>().X, Is.EqualTo(5));
+            That(vel2Tagged.Get<JobPos>().X, Is.EqualTo(0));
+            That(vel3.Get<JobPos>().X, Is.EqualTo(5));
         }
 
         [Test]

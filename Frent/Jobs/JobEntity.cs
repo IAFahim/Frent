@@ -23,16 +23,17 @@ public static partial class JobEntity
     public static void Run<TJob>(this TJob job, World world) where TJob : struct, IJobEntity
     {
         var plan = JobPlan<TJob>.Instance;
-        var query = plan.BuildQuery(world);
+        var queries = plan.BuildQueries(world);
         world.EnterDisallowState();
         try
         {
-            foreach (var archetype in query.AsSpan())
-            {
-                var count = archetype.EntityCount;
-                if (count > 0)
-                    plan.Runner(ref job, world, archetype, 0, count);
-            }
+            foreach (var query in queries)
+                foreach (var archetype in query.AsSpan())
+                {
+                    var count = archetype.EntityCount;
+                    if (count > 0)
+                        plan.Runner(ref job, world, archetype, 0, count);
+                }
         }
         finally
         {
@@ -48,11 +49,11 @@ public static partial class JobEntity
     public static void ScheduleParallel<TJob>(this TJob job, World world) where TJob : struct, IJobEntity
     {
         var plan = JobPlan<TJob>.Instance;
-        var query = plan.BuildQuery(world);
+        var queries = plan.BuildQueries(world);
         world.EnterDisallowState();
         try
         {
-            var ranges = BuildRanges(query.AsSpan());
+            var ranges = BuildRanges(queries);
             if (ranges.Length == 0)
                 return;
             var runner = plan.Runner;
@@ -83,23 +84,31 @@ public static partial class JobEntity
         }
     }
 
-    private static ArchetypeRange[] BuildRanges(Span<Archetype> archetypes)
+    private static ArchetypeRange[] BuildRanges(Query[] queries)
     {
         long total = 0;
-        for (var i = 0; i < archetypes.Length; i++)
-            total += archetypes[i].EntityCount;
+        for (var q = 0; q < queries.Length; q++)
+        {
+            var archetypes = queries[q].AsSpan();
+            for (var i = 0; i < archetypes.Length; i++)
+                total += archetypes[i].EntityCount;
+        }
         if (total == 0)
             return Array.Empty<ArchetypeRange>();
         long boundedBatch = Math.Min(Math.Max(total / (Environment.ProcessorCount * 4), 512), int.MaxValue);
         int batch = (int)boundedBatch;
-        var ranges = new ArchetypeRange[archetypes.Length + (int)(total / batch) + 1];
+        var ranges = new ArchetypeRange[total / batch + queries.Length + 1];
         var count2 = 0;
-        for (var i = 0; i < archetypes.Length; i++)
+        for (var q = 0; q < queries.Length; q++)
         {
-            var archetype = archetypes[i];
-            var count = archetype.EntityCount;
-            for (var from = 0; from < count; from += batch)
-                ranges[count2++] = new ArchetypeRange(archetype, from, Math.Min(from + batch, count));
+            var archetypes = queries[q].AsSpan();
+            for (var i = 0; i < archetypes.Length; i++)
+            {
+                var archetype = archetypes[i];
+                var count = archetype.EntityCount;
+                for (var from = 0; from < count; from += batch)
+                    ranges[count2++] = new ArchetypeRange(archetype, from, Math.Min(from + batch, count));
+            }
         }
         Array.Resize(ref ranges, count2);
         return ranges;
@@ -118,12 +127,12 @@ internal sealed class JobPlan<TJob> where TJob : struct, IJobEntity
     public static JobPlan<TJob> Instance => s_Instance ??= Create();
 
     public readonly JobArchetypeRunner<TJob> Runner;
-    public readonly Func<World, Query> BuildQuery;
+    public readonly Func<World, Query[]> BuildQueries;
 
-    private JobPlan(JobArchetypeRunner<TJob> runner, Func<World, Query> buildQuery)
+    private JobPlan(JobArchetypeRunner<TJob> runner, Func<World, Query[]> buildQueries)
     {
         Runner = runner;
-        BuildQuery = buildQuery;
+        BuildQueries = buildQueries;
     }
 
     private const BindingFlags All = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
@@ -169,12 +178,21 @@ internal sealed class JobPlan<TJob> where TJob : struct, IJobEntity
 
         var queryTypes = new List<Type>(componentTypes);
         var noneTypes = new List<Type>();
+        var anyTypes = new List<Type>();
         if (jobType.GetCustomAttribute<WithAllAttribute>() is { } withAll)
             foreach (var type in withAll.Types)
             {
                 if (!type.IsValueType)
                     throw new InvalidOperationException($"{jobType}: [WithAll] requires component structs.");
                 queryTypes.Add(type);
+            }
+        if (jobType.GetCustomAttribute<WithAnyAttribute>() is { } withAny)
+            foreach (var type in withAny.Types)
+            {
+                if (!type.IsValueType)
+                    throw new InvalidOperationException($"{jobType}: [WithAny] requires component structs.");
+                if (!queryTypes.Contains(type) && !anyTypes.Contains(type))
+                    anyTypes.Add(type);
             }
         if (jobType.GetCustomAttribute<WithNoneAttribute>() is { } withNone)
             foreach (var type in withNone.Types)
@@ -184,16 +202,45 @@ internal sealed class JobPlan<TJob> where TJob : struct, IJobEntity
                 noneTypes.Add(type);
             }
 
-        var chain = typeof(QueryBuilder);
-        foreach (var type in queryTypes)
-            chain = typeof(QueryWith<,>).MakeGenericType(type, chain);
-        foreach (var type in noneTypes)
-            chain = typeof(QueryWithout<,>).MakeGenericType(type, chain);
-        var closed = FindBuildQuery().MakeGenericMethod(chain);
-        Func<World, Query> buildQuery = world => (Query)closed.Invoke(world, null)!;
+        var buildQueryMethod = FindBuildQuery();
+        Func<World, Query[]> buildQueries;
+        if (anyTypes.Count == 0)
+        {
+            var chain = typeof(QueryBuilder);
+            foreach (var type in queryTypes)
+                chain = typeof(QueryWith<,>).MakeGenericType(type, chain);
+            foreach (var type in noneTypes)
+                chain = typeof(QueryWithout<,>).MakeGenericType(type, chain);
+            var closed = buildQueryMethod.MakeGenericMethod(chain);
+            buildQueries = world => new[] { (Query)closed.Invoke(world, null)! };
+        }
+        else
+        {
+            var variants = new List<MethodInfo>(anyTypes.Count);
+            for (var k = 0; k < anyTypes.Count; k++)
+            {
+                var chain = typeof(QueryBuilder);
+                foreach (var type in queryTypes)
+                    chain = typeof(QueryWith<,>).MakeGenericType(type, chain);
+                chain = typeof(QueryWith<,>).MakeGenericType(anyTypes[k], chain);
+                for (var j = 0; j < k; j++)
+                    chain = typeof(QueryWithout<,>).MakeGenericType(anyTypes[j], chain);
+                foreach (var type in noneTypes)
+                    chain = typeof(QueryWithout<,>).MakeGenericType(type, chain);
+                variants.Add(buildQueryMethod.MakeGenericMethod(chain));
+            }
+            var variantArray = variants.ToArray();
+            buildQueries = world =>
+            {
+                var queries = new Query[variantArray.Length];
+                for (var k = 0; k < variantArray.Length; k++)
+                    queries[k] = (Query)variantArray[k].Invoke(world, null)!;
+                return queries;
+            };
+        }
 
         var runner = EmitRunner(execute, hasEntity, componentTypes, byRef);
-        return new JobPlan<TJob>(runner, buildQuery);
+        return new JobPlan<TJob>(runner, buildQueries);
     }
 
     private static MethodInfo FindBuildQuery()

@@ -26,6 +26,16 @@ public sealed class WithAllAttribute(params Type[] types) : Attribute
 }
 
 /// <summary>
+/// Component types the job's query must match at least one of.
+/// </summary>
+[AttributeUsage(AttributeTargets.Struct)]
+public sealed class WithAnyAttribute(params Type[] types) : Attribute
+{
+    /// <summary>Component types of which at least one must be present.</summary>
+    public Type[] Types = types;
+}
+
+/// <summary>
 /// Component types the job's query must not match.
 /// </summary>
 [AttributeUsage(AttributeTargets.Struct)]
