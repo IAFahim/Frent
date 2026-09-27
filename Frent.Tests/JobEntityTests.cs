@@ -1,5 +1,7 @@
 using System;
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using Frent.Core;
 using Frent.Jobs;
 using Frent.Marshalling;
@@ -64,7 +66,7 @@ internal struct EntityNotFirstJob : IJobEntity
 
 internal class JobEntityTests
 {
-    private static World CreateWorld(int count, float vel = 1f)
+    internal static World CreateWorld(int count, float vel = 1f)
     {
         var world = new World();
         for (int i = 0; i < count; i++)
@@ -72,7 +74,7 @@ internal class JobEntityTests
         return world;
     }
 
-    private static float SumPositions(World world)
+    internal static float SumPositions(World world)
     {
         float sum = 0;
         foreach (var (p, v) in world.Query<JobPos, JobVel>().Enumerate<JobPos, JobVel>())
@@ -199,3 +201,155 @@ internal class JobEntityTests
         Throws<InvalidOperationException>(() => new EntityNotFirstJob().Run(world));
     }
 }
+
+internal struct A8C1 { public int V; }
+    internal struct A8C2 { public int V; }
+    internal struct A8C3 { public int V; }
+    internal struct A8C4 { public int V; }
+    internal struct A8C5 { public int V; }
+    internal struct A8C6 { public int V; }
+    internal struct A8C7 { public int V; }
+    internal struct A8C8 { public int V; }
+
+    internal struct EightComponentJob : IJobEntity
+    {
+        private void Execute(ref A8C1 a, ref A8C2 b, ref A8C3 c, ref A8C4 d, in A8C5 e, in A8C6 f, A8C7 g, A8C8 h)
+            => a.V = b.V + c.V + d.V + e.V + f.V + g.V + h.V;
+    }
+
+    internal struct EntityOnlyJob : IJobEntity
+    {
+        private int _unused;
+        private void Execute(Entity entity) => _unused = EntityMarshal.EntityID(entity);
+    }
+
+    [WithAll(typeof(JobTag))]
+    [WithNone(typeof(JobVel))]
+    internal struct CombinedFilterJob : IJobEntity
+    {
+        private void Execute(ref JobPos p) => p.X = 2;
+    }
+
+    internal struct ThrowingJob : IJobEntity
+    {
+        public int Mod;
+        private void Execute(ref JobPos p)
+        {
+            if (p.X == Mod)
+                throw new ArgumentException("boom");
+        }
+    }
+
+    internal static class JobEntityUseCaseTests
+    {
+        [Test]
+        public static void ManyArchetypes_AllVisitedInParallel()
+        {
+            using var world = new World();
+            var handles = new List<Entity>();
+            for (int archetype = 0; archetype < 40; archetype++)
+                for (int i = 0; i < 25; i++)
+                    handles.Add(world.Create(new JobPos { X = 0 }, new JobVel { X = archetype + 1 }));
+
+            new MoveJob { Dt = 1f }.ScheduleParallel(world);
+
+            foreach (var handle in handles)
+                That(handle.Get<JobPos>().X, Is.EqualTo(handle.Get<JobVel>().X));
+        }
+
+        [Test]
+        public static void EightComponentJob_Works()
+        {
+            using var world = new World();
+            var handle = world.Create(new A8C1(), new A8C2 { V = 2 }, new A8C3 { V = 3 }, new A8C4 { V = 4 },
+                new A8C5 { V = 5 }, new A8C6 { V = 6 }, new A8C7 { V = 7 }, new A8C8 { V = 8 });
+            new EightComponentJob().Run(world);
+            That(handle.Get<A8C1>().V, Is.EqualTo(2 + 3 + 4 + 5 + 6 + 7 + 8));
+        }
+
+        [Test]
+        public static void EntityOnlyJob_CoversAllEntities()
+        {
+            using var world = new World();
+            var tagged = new List<Entity>();
+            for (int i = 0; i < 10; i++)
+                tagged.Add(world.Create(new JobPos()));
+            for (int i = 0; i < 10; i++)
+                world.Create(new JobTag());
+
+            That(() => new EntityOnlyJob().Run(world), NUnit.Framework.Throws.Nothing);
+        }
+
+        [Test]
+        public static void CombinedFilters_ApplyTogether()
+        {
+            using var world = new World();
+            var plain = world.Create(new JobPos());
+            var tagged = world.Create(new JobPos(), new JobTag());
+            var full = world.Create(new JobPos(), new JobTag(), new JobVel());
+
+            new CombinedFilterJob().Run(world);
+
+            That(plain.Get<JobPos>().X, Is.EqualTo(0));
+            That(tagged.Get<JobPos>().X, Is.EqualTo(2));
+            That(full.Get<JobPos>().X, Is.EqualTo(0));
+        }
+
+        [Test]
+        public static void ExceptionInExecute_PropagatesAndWorldStaysUsable()
+        {
+            using var world = JobEntityTests.CreateWorld(100);
+            var aggregate = Throws<AggregateException>(() => new ThrowingJob { Mod = 0 }.ScheduleParallel(world));
+            That(aggregate!.InnerException, Is.InstanceOf<ArgumentException>());
+
+            var created = world.Create(new JobPos { X = 5 }, new JobVel { X = 1 });
+            new MoveJob { Dt = 1f }.Run(world);
+            That(created.Get<JobPos>().X, Is.EqualTo(6));
+        }
+
+        [Test]
+        public static void TwoWorlds_SameJobPlan()
+        {
+            using var worldA = JobEntityTests.CreateWorld(50, 2f);
+            using var worldB = JobEntityTests.CreateWorld(60, 3f);
+            new MoveJob { Dt = 1f }.ScheduleParallel(worldA);
+            new MoveJob { Dt = 1f }.ScheduleParallel(worldB);
+            That(JobEntityTests.SumPositions(worldA), Is.EqualTo(50 * 2f).Within(0.001f));
+            That(JobEntityTests.SumPositions(worldB), Is.EqualTo(60 * 3f).Within(0.001f));
+        }
+
+        [Test]
+        public static void StructuralChangesBetweenSchedules()
+        {
+            using var world = JobEntityTests.CreateWorld(100);
+            new MoveJob { Dt = 1f }.ScheduleParallel(world);
+            for (int i = 0; i < 20; i++)
+                world.Create(new JobPos { X = 0 }, new JobVel { X = 10 });
+            new MoveJob { Dt = 1f }.ScheduleParallel(world);
+            That(JobEntityTests.SumPositions(world), Is.EqualTo(100 * 1f + 100 * 1f + 20 * 10f).Within(0.001f));
+        }
+
+        [Test]
+        public static void EmptyWorld_NoOp()
+        {
+            using var world = new World();
+            That(() => new MoveJob { Dt = 1f }.ScheduleParallel(world), NUnit.Framework.Throws.Nothing);
+        }
+
+        [Test]
+        public static void TinyWorld_Works()
+        {
+            using var world = JobEntityTests.CreateWorld(1);
+            new MoveJob { Dt = 2f }.ScheduleParallel(world);
+            That(JobEntityTests.SumPositions(world), Is.EqualTo(2f).Within(0.001f));
+        }
+
+        [Test]
+        public static void RepeatedScheduling_IsStable()
+        {
+            using var world = JobEntityTests.CreateWorld(1000);
+            for (int i = 0; i < 100; i++)
+                new MoveJob { Dt = 0.01f }.ScheduleParallel(world);
+            That(JobEntityTests.SumPositions(world), Is.EqualTo(1000 * 1f).Within(0.1f));
+        }
+    }

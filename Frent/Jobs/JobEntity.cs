@@ -90,16 +90,19 @@ public static partial class JobEntity
             total += archetypes[i].EntityCount;
         if (total == 0)
             return Array.Empty<ArchetypeRange>();
-        long batch = Math.Max(total / (Environment.ProcessorCount * 4), 512);
-        var ranges = new List<ArchetypeRange>(archetypes.Length + 8);
+        long boundedBatch = Math.Min(Math.Max(total / (Environment.ProcessorCount * 4), 512), int.MaxValue);
+        int batch = (int)boundedBatch;
+        var ranges = new ArchetypeRange[archetypes.Length + (int)(total / batch) + 1];
+        var count2 = 0;
         for (var i = 0; i < archetypes.Length; i++)
         {
             var archetype = archetypes[i];
             var count = archetype.EntityCount;
-            for (var from = 0; from < count; from += (int)Math.Min(batch, int.MaxValue))
-                ranges.Add(new ArchetypeRange(archetype, from, Math.Min(from + (int)Math.Min(batch, int.MaxValue), count)));
+            for (var from = 0; from < count; from += batch)
+                ranges[count2++] = new ArchetypeRange(archetype, from, Math.Min(from + batch, count));
         }
-        return ranges.ToArray();
+        Array.Resize(ref ranges, count2);
+        return ranges;
     }
 
     internal static Entity GetEntityAt(Span<EntityIDOnly> entities, int index, World world) => entities[index].ToEntity(world);
