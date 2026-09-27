@@ -1311,6 +1311,12 @@ partial struct Entity
     public readonly EntityComponentIDEnumerator GetEnumerator() => new(this);
 
     /// <summary>
+    /// Checks whether this <see cref="Entity"/> is alive, and returns <see langword="true"/> if it is, otherwise <see langword="false"/>.
+    /// </summary>
+    /// <param name="entity">The entity to check liveliness for.</param>
+    public static implicit operator bool(Entity entity) => entity.IsAlive;
+
+    /// <summary>
     /// The null entity
     /// </summary>
     public static Entity Null => default;

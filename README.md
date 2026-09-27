@@ -16,8 +16,8 @@ Want to write systems anyway? Frent also has a Systems API that lets you query e
 ## Quick Example
 
 ```csharp
+using System;
 using Frent;
-using Frent.Systems;
 using Frent.Components;
 using System.Numerics;
 

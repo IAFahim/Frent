@@ -241,6 +241,22 @@ internal class EntityTests
     }
 
     [Test]
+    public void ImplicitOperator_TracksIsAlive()
+    {
+        using World world = new();
+        var e = world.Create(new Struct1(), new Struct2(), new Struct3());
+        if(!e)
+        {
+            Fail("Expected entity to be alive");
+        }
+        e.Delete();
+        if (e)
+        {
+            Fail("Expected entity to be dead");
+        }
+    }
+
+    [Test]
     public void Detach_RemovesTag()
     {
         using World world = new();
