@@ -116,7 +116,7 @@ internal class ChunkEnumerationTests
         foreach (var chunk in world.Query<Struct1>().EnumerateChunks<Struct1>())
         {
             chunk.Deconstruct(out Span<Struct1> components);
-            var chunkIds = chunk.Ids;
+            var chunkIds = chunk.IDs;
             That(chunkIds.Length, Is.EqualTo(components.Length));
             for (int i = 0; i < components.Length; i++)
             {
@@ -141,7 +141,7 @@ internal class ChunkEnumerationTests
         foreach (var chunk in world.Query<Struct1, Struct2>().EnumerateChunks<Struct1, Struct2>())
         {
             chunk.Deconstruct(out Span<Struct1> components, out Span<Struct2> doubled);
-            var chunkIds = chunk.Ids;
+            var chunkIds = chunk.IDs;
             for (int i = 0; i < components.Length; i++)
             {
                 That(chunkIds[i], Is.GreaterThanOrEqualTo(0));

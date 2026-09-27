@@ -40,7 +40,7 @@ public ref struct ChunkQueryEnumerator<T>
             return new()
             {
                 Entities = new EntityEnumerator(_world, entities),
-                Ids = new EntityIdSpan(entities),
+                IDs = new EntityIDSpan(entities),
                 Span = cur.GetComponentSpan<T>(),
             };
         }

@@ -8,11 +8,11 @@ namespace Frent.Systems;
 /// <remarks>
 /// Ids identify an entity's storage slot within its <see cref="World"/>; compare against <see cref="Entity"/> handles when a full identity including version is required.
 /// </remarks>
-public ref struct EntityIdSpan
+public ref struct EntityIDSpan
 {
     private Span<EntityIDOnly> _ids;
 
-    internal EntityIdSpan(Span<EntityIDOnly> ids)
+    internal EntityIDSpan(Span<EntityIDOnly> ids)
     {
         _ids = ids;
     }

@@ -75,7 +75,7 @@ public ref struct ChunkTuple<T>
     /// <summary>
     /// The raw ids of the entities in this chunk, without constructing <see cref="Entity"/> instances.
     /// </summary>
-    public EntityIdSpan Ids;
+    public EntityIDSpan IDs;
     public Span<T> Span;
 
     /// <summary>
